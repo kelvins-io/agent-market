@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
-const DEFAULT_LOC = { lat: 39.9042, lng: 116.4074 }
+// Approximate geographic center of China; used when locating fails.
+const NATIONWIDE_LOC = { lat: 35.8617, lng: 104.1954 }
+// Large enough to cover China from any domestic coordinate.
+const NATIONWIDE_RADIUS_KM = 6000
 
 function useSpeechRecognition({ onResult }) {
   const recRef = useRef(null)
@@ -44,7 +47,7 @@ async function discoverAgents({ lat, lng, q, category, tags, radiusKm }) {
   const params = new URLSearchParams({
     lat: String(lat),
     lng: String(lng),
-    radius_km: String(radiusKm || 50),
+    radius_km: String(radiusKm ?? NATIONWIDE_RADIUS_KM),
   })
   if (q) params.set('q', q)
   if (category) params.set('category', category)
@@ -62,10 +65,39 @@ async function reversePlace(lat, lng) {
   return res.json()
 }
 
+async function locateByIP() {
+  const res = await fetch('/api/v1/geo/ip')
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
+function geoErrorHint(err) {
+  if (!err || typeof err.code !== 'number') return '定位失败'
+  if (err.code === 0) return '浏览器不支持定位'
+  if (err.code === 1) return '已拒绝定位权限'
+  if (err.code === 2) return '无法获取位置'
+  if (err.code === 3) return '定位超时'
+  return '定位失败'
+}
+
+function browserLocate(options) {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(Object.assign(new Error('unsupported'), { code: 0 }))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, options)
+  })
+}
+
 export default function App() {
-  const [loc, setLoc] = useState(DEFAULT_LOC)
-  const [placeName, setPlaceName] = useState('北京')
-  const [locHint, setLocHint] = useState('默认位置')
+  const [loc, setLoc] = useState(null)
+  const [placeName, setPlaceName] = useState('定位中')
+  const [locHint, setLocHint] = useState('正在获取当前位置…')
+  const [locating, setLocating] = useState(false)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('')
   const [tag, setTag] = useState('')
@@ -78,6 +110,7 @@ export default function App() {
   const [agentInput, setAgentInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [showScrollUp, setShowScrollUp] = useState(false)
+  const locateSeq = useRef(0)
 
   useEffect(() => {
     const onScroll = () => {
@@ -94,93 +127,112 @@ export default function App() {
   }, [])
   const speech = useSpeechRecognition({ onResult: onVoice })
 
-  const resolvePlace = useCallback(async (lat, lng, hint) => {
+  const applyLocation = useCallback(async (next, hint, seq) => {
+    if (seq !== locateSeq.current) return
+    setLoc(next)
     try {
-      const place = await reversePlace(lat, lng)
+      const place = await reversePlace(next.lat, next.lng)
+      if (seq !== locateSeq.current) return
       setPlaceName(place.name || place.city || '未知')
-      setLocHint(hint || `${lat.toFixed(3)}, ${lng.toFixed(3)}`)
+      setLocHint(hint || `${next.lat.toFixed(3)}, ${next.lng.toFixed(3)}`)
     } catch {
-      setPlaceName(`${lat.toFixed(2)}, ${lng.toFixed(2)}`)
+      if (seq !== locateSeq.current) return
+      setPlaceName(`${next.lat.toFixed(2)}, ${next.lng.toFixed(2)}`)
       setLocHint(hint || '坐标')
     }
   }, [])
 
-  const useBeijingDemo = useCallback(() => {
-    setLoc(DEFAULT_LOC)
-    resolvePlace(DEFAULT_LOC.lat, DEFAULT_LOC.lng, '演示位置（示例 Agent 在北京）')
-  }, [resolvePlace])
+  const useNationwide = useCallback((hint, seq) => {
+    if (seq !== locateSeq.current) return
+    setLoc(NATIONWIDE_LOC)
+    setPlaceName('全国')
+    setLocHint(hint || '搜索全国范围')
+  }, [])
+
+  const locateMe = useCallback(async () => {
+    const seq = ++locateSeq.current
+    setLocating(true)
+    setPlaceName('定位中')
+    setLocHint('正在获取当前位置…')
+
+    try {
+      if (!navigator.geolocation) {
+        useNationwide('浏览器不支持定位，已切换全国', seq)
+        return
+      }
+
+      try {
+        const pos = await browserLocate({
+          enableHighAccuracy: false,
+          timeout: 12000,
+          maximumAge: 60000,
+        })
+        if (seq !== locateSeq.current) return
+        await applyLocation(
+          { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          '当前位置',
+          seq,
+        )
+        return
+      } catch (browserErr) {
+        if (seq !== locateSeq.current) return
+        setLocHint(`${geoErrorHint(browserErr)}，尝试网络定位…`)
+      }
+
+      try {
+        const place = await locateByIP()
+        if (seq !== locateSeq.current) return
+        const next = { lat: place.lat, lng: place.lng }
+        setLoc(next)
+        setPlaceName(place.name || place.city || '未知')
+        setLocHint('网络定位（公网 IP 近似）')
+        return
+      } catch {
+        if (seq !== locateSeq.current) return
+      }
+
+      useNationwide('定位失败，已切换全国', seq)
+    } finally {
+      if (seq === locateSeq.current) setLocating(false)
+    }
+  }, [applyLocation, useNationwide])
 
   const runDiscover = useCallback(async (overrides = {}) => {
+    const center = overrides.lat != null
+      ? { lat: overrides.lat, lng: overrides.lng }
+      : loc
+    if (!center) return
     setStatus('正在发现附近 Agent…')
     const q = overrides.q ?? query
     const cat = overrides.category ?? category
     const tags = overrides.tags ?? tag
-    const center = overrides.lat != null
-      ? { lat: overrides.lat, lng: overrides.lng }
-      : loc
     try {
-      let list = await discoverAgents({
+      const list = await discoverAgents({
         lat: center.lat,
         lng: center.lng,
         q,
         category: cat,
         tags,
-        radiusKm: overrides.radiusKm ?? 50,
+        radiusKm: overrides.radiusKm ?? NATIONWIDE_RADIUS_KM,
       })
-      // Demo agents are anchored in Beijing; if the browser is elsewhere, fall back.
-      const farFromBeijing =
-        Math.abs(center.lat - DEFAULT_LOC.lat) > 0.5 ||
-        Math.abs(center.lng - DEFAULT_LOC.lng) > 0.5
-      if (list.length === 0 && farFromBeijing && !overrides.skipFallback) {
-        list = await discoverAgents({
-          lat: DEFAULT_LOC.lat,
-          lng: DEFAULT_LOC.lng,
-          q,
-          category: cat,
-          tags,
-          radiusKm: 50,
-        })
-        if (list.length > 0) {
-          setLoc(DEFAULT_LOC)
-          resolvePlace(DEFAULT_LOC.lat, DEFAULT_LOC.lng, '演示位置（示例 Agent 在北京）')
-          setAgents(list)
-          setStatus(`当前位置附近无 Agent；已切换到北京演示区，找到 ${list.length} 个`)
-          return
-        }
-      }
       setAgents(list)
-      setStatus(list.length ? `找到 ${list.length} 个 Agent` : '半径内没有匹配的 Agent（可点「北京演示」）')
+      setStatus(list.length ? `找到 ${list.length} 个 Agent` : '未找到匹配的 Agent')
     } catch (e) {
       setStatus(`发现失败：${e.message}`)
     }
-  }, [loc, query, category, tag, resolvePlace])
+  }, [loc, query, category, tag])
 
   useEffect(() => {
-    resolvePlace(DEFAULT_LOC.lat, DEFAULT_LOC.lng, '默认位置')
-    if (!navigator.geolocation) {
-      runDiscover()
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude }
-        setLoc(next)
-        resolvePlace(next.lat, next.lng, '当前位置')
-      },
-      () => {
-        setLocHint('定位失败，使用默认位置')
-        resolvePlace(DEFAULT_LOC.lat, DEFAULT_LOC.lng, '默认位置')
-      },
-      { enableHighAccuracy: false, timeout: 8000 },
-    )
-  }, [])
+    locateMe()
+  }, [locateMe])
 
   useEffect(() => {
+    if (!loc) return
     runDiscover()
-  }, [loc.lat, loc.lng])
+  }, [loc?.lat, loc?.lng])
 
   useEffect(() => {
-    if (!query) return
+    if (!loc || !query) return
     const t = setTimeout(() => runDiscover({ q: query }), 200)
     return () => clearTimeout(t)
   }, [query])
@@ -193,6 +245,7 @@ export default function App() {
   async function sendHost() {
     const message = hostInput.trim()
     if (!message || busy) return
+    const center = loc || NATIONWIDE_LOC
     setBusy(true)
     setHostMessages((m) => [...m, { role: 'user', text: message }])
     setHostInput('')
@@ -200,7 +253,7 @@ export default function App() {
       const res = await fetch('/api/v1/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, lat: loc.lat, lng: loc.lng }),
+        body: JSON.stringify({ message, lat: center.lat, lng: center.lng }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -291,10 +344,16 @@ export default function App() {
           <span className="brand-dot" aria-hidden />
           Agent Market
         </div>
-        <div className="loc-pill" title={locHint}>
+        <button
+          className="loc-pill"
+          type="button"
+          title={`${locHint}（点击重新定位）`}
+          onClick={locateMe}
+          disabled={locating}
+        >
           <span className="loc-place">{placeName}</span>
-          <span className="loc-hint">{locHint}</span>
-        </div>
+          <span className="loc-hint">{locating ? '定位中…' : locHint}</span>
+        </button>
       </header>
 
       <section className="hero">
@@ -311,9 +370,6 @@ export default function App() {
             placeholder="试试：附近的天气 / 美食 / 翻译 / 电影"
             onKeyDown={(e) => e.key === 'Enter' && runDiscover()}
           />
-          <button className="btn btn-primary" type="button" onClick={() => runDiscover()}>
-            搜索
-          </button>
           {speech.supported && (
             <button
               className={`btn btn-voice ${speech.listening ? 'listening' : ''}`}
@@ -323,6 +379,9 @@ export default function App() {
               {speech.listening ? '聆听中…' : '语音'}
             </button>
           )}
+          <button className="btn btn-primary" type="button" onClick={() => runDiscover()}>
+            搜索
+          </button>
         </div>
         <div className="filters">
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -348,8 +407,8 @@ export default function App() {
           <button className="btn btn-ghost" type="button" onClick={() => runDiscover()}>
             应用筛选
           </button>
-          <button className="btn btn-ghost" type="button" onClick={useBeijingDemo}>
-            北京演示
+          <button className="btn btn-ghost" type="button" onClick={locateMe} disabled={locating}>
+            {locating ? '定位中…' : '重新定位'}
           </button>
         </div>
         <div className="status-line">{status}</div>

@@ -33,6 +33,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/chat", s.handleChat)
 	mux.HandleFunc("POST /api/v1/a2a/{id}/message:send", s.handleA2ASend)
 	mux.HandleFunc("GET /api/v1/geo/reverse", s.handleGeoReverse)
+	mux.HandleFunc("GET /api/v1/geo/ip", s.handleGeoIP)
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -53,6 +54,15 @@ func (s *Server) handleGeoReverse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, geo.ReversePlace(lat, lng))
+}
+
+func (s *Server) handleGeoIP(w http.ResponseWriter, r *http.Request) {
+	place, err := geo.ApproximateByPublicIP(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, place)
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +116,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	lng, _ := strconv.ParseFloat(q.Get("lng"), 64)
 	radius, _ := strconv.ParseFloat(q.Get("radius_km"), 64)
 	if radius <= 0 {
-		radius = 50
+		radius = 6000
 	}
 	var tags []string
 	if t := q.Get("tags"); t != "" {
@@ -177,7 +187,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lat, lng := 39.9042, 116.4074 // Beijing default
+	lat, lng := 35.8617, 104.1954 // nationwide center when client omits location
 	if req.Lat != nil {
 		lat = *req.Lat
 	}

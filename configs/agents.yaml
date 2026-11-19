@@ -1,6 +1,6 @@
 market_url: http://127.0.0.1:13100
 
-# Coordinates are relative to Beijing CBD so "nearby" demo works with default UI fallback.
+# Coordinates are relative to Beijing CBD so "nearby" demo works with the default location.
 agents:
   - id: weather
     name: WeatherAgent

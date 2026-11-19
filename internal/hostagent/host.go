@@ -56,7 +56,7 @@ func New(ctx context.Context, store *registry.Store, disc *discovery.Service) (*
 Help users find nearby agents and talk to them over A2A.
 
 Tool rules:
-- discover_agents: prefer the q keyword (e.g. 天气, 美食, 翻译, 电影, 电视剧). Optional category is "utility", "lifestyle", or "entertainment". Optional tags examples: weather, forecast, food, travel, translate, movie, tv, 天气, 美食, 翻译, 电影, 电视剧. Never invent category/tag values that are not in those lists. Default radius_km to 50. Omit category/tags when unsure.
+- discover_agents: prefer the q keyword (e.g. 天气, 美食, 翻译, 电影, 电视剧). Optional category is "utility", "lifestyle", or "entertainment". Optional tags examples: weather, forecast, food, travel, translate, movie, tv, 天气, 美食, 翻译, 电影, 电视剧. Never invent category/tag values that are not in those lists. Default radius_km to 6000 (nationwide). Omit category/tags when unsure.
 - talk_to_agent: after discover returns an agent, call it with that agent's id to fulfill the user's request. For weather, include the user's city in the message (e.g. "今天北京天气怎么样"). For movie/TV (影视) agents, pass the title or 电影/电视剧 keyword (e.g. "帮我搜狂飙在哪些平台能看"). For takeout/merchant (外卖) agents, ask about the menu in Chinese (e.g. "今天有什么菜") and summarize the returned menu/prices for the user.
 
 Reply in the user's language. Keep answers concise.`,
@@ -155,14 +155,14 @@ func locFrom(ctx context.Context) (float64, float64) {
 	if v, ok := ctx.Value(locKey{}).(userLoc); ok {
 		return v.Lat, v.Lng
 	}
-	return 39.9042, 116.4074
+	return 35.8617, 104.1954 // nationwide center
 }
 
 type discoverArgs struct {
 	Q        string  `json:"q" jsonschema:"description=keyword such as 天气/美食/翻译/电影/电视剧 or weather/food/translate/movie"`
 	Category string  `json:"category" jsonschema:"description=optional category: utility or lifestyle only"`
 	Tags     string  `json:"tags" jsonschema:"description=optional comma-separated tags; match any one tag"`
-	RadiusKm float64 `json:"radius_km" jsonschema:"description=search radius in km, default 50"`
+	RadiusKm float64 `json:"radius_km" jsonschema:"description=search radius in km, default 6000 (nationwide)"`
 }
 
 func (h *Host) discoverTool() (tool.InvokableTool, error) {
@@ -173,7 +173,7 @@ func (h *Host) discoverTool() (tool.InvokableTool, error) {
 			tags := splitCSV(args.Tags)
 			radius := args.RadiusKm
 			if radius <= 0 {
-				radius = 50
+				radius = 6000
 			}
 			category := strings.TrimSpace(args.Category)
 			// LLMs often confuse tag values with category (e.g. category=weather).
