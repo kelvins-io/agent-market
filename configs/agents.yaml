@@ -1,0 +1,44 @@
+market_url: http://127.0.0.1:13100
+
+# Coordinates are relative to Beijing CBD so "nearby" demo works with default UI fallback.
+agents:
+  - id: weather
+    name: WeatherAgent
+    description: 附近天气与预报 / Provides weather forecasts for nearby locations
+    category: utility
+    tags: [weather, forecast, 天气]
+    lat: 39.9087
+    lng: 116.3975
+    port: 8101
+    handler_path: /a2a
+
+  - id: localguide
+    name: LocalGuideAgent
+    description: 本地美食与出行推荐 / Recommends local food and travel spots near you
+    category: lifestyle
+    tags: [food, travel, local, 美食]
+    lat: 39.9163
+    lng: 116.3972
+    port: 8102
+    handler_path: /a2a
+
+  - id: translator
+    name: TranslatorAgent
+    description: 多语言翻译 / Translates text between languages
+    category: utility
+    tags: [language, translate, 翻译]
+    # Farther away so distance ranking is visible
+    lat: 40.0020
+    lng: 116.4800
+    port: 8103
+    handler_path: /a2a
+
+  - id: mediatv
+    name: MediaTVAgent
+    description: 电影电视剧搜索（爱奇艺/优酷/腾讯视频） / Search movies and TV series on iQIYI, Youku, Tencent Video
+    category: entertainment
+    tags: [movie, tv, series, 电影, 电视剧, 影视, iqiyi, youku, tencent]
+    lat: 39.9120
+    lng: 116.4050
+    port: 8104
+    handler_path: /a2a

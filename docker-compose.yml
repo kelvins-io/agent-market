@@ -1,0 +1,41 @@
+services:
+  market:
+    build: .
+    image: agent-market:local
+    command: ["/app/market", "-addr", ":13100", "-db", "/data/market.db", "-static", "/app/web/dist"]
+    ports:
+      - "13100:13100"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      # Default on: host/container often cannot reach api.openai.com. Set MOCK_LLM=0 and a reachable OPENAI_BASE_URL for real models.
+      MOCK_LLM: ${MOCK_LLM:-1}
+      # Shared with takeout-agent when talking over a2a-go v2 (Bearer).
+      A2A_BEARER_TOKEN: ${A2A_BEARER_TOKEN:-}
+    volumes:
+      - market-data:/data
+    restart: unless-stopped
+
+  agents:
+    image: agent-market:local
+    depends_on:
+      - market
+    entrypoint: ["/app/agents"]
+    command: ["-config", "/app/configs/agents.yaml"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-mock}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      MOCK_LLM: ${MOCK_LLM:-1}
+      MARKET_URL: http://market:13100
+      ADVERTISE_HOST: agents
+    expose:
+      - "8101"
+      - "8102"
+      - "8103"
+      - "8104"
+    restart: unless-stopped
+
+volumes:
+  market-data:

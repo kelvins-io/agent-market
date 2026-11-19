@@ -1,0 +1,11 @@
+.git
+data
+*.db
+web/node_modules
+web/dist
+.env
+.env.*
+*.md
+.cursor
+agent-transcripts
+**/__pycache__
